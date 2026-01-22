@@ -1,0 +1,40 @@
+name: captioner
+description: A Flutter project to add captions to videos.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.9.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  file_picker: ^10.0.0
+  flutter_secure_storage: ^10.0.0
+  fvp: ^0.35.2
+  google_fonts: ^7.1.0
+  http: ^1.6.0
+  path: ^1.9.1
+  path_provider: ^2.1.5
+  provider: ^6.1.5+1
+  shared_preferences: ^2.5.4
+  system_fonts: ^1.0.1
+  video_player: ^2.10.1
+  ffmpeg_kit_flutter_new: ^4.1.0
+  wakelock_plus: ^1.1.4
+  open_filex: ^4.4.0
+  desktop_drop: ^0.7.0
+  android_intent_plus: ^6.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  video_player_platform_interface: ^6.6.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+    - assets/fonts/

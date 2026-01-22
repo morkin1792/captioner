@@ -1,0 +1,42 @@
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = '../build'
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(':app')
+}
+
+// Workaround for legacy plugins not specifying namespace (required by AGP 8+)
+subprojects {
+    pluginManager.withPlugin('com.android.library') {
+        android {
+            if (namespace == null) {
+                def safeName = project.name.replace('-', '.').replace('_', '.')
+                // Sanitize keywords
+                safeName = safeName.split('\\.').collect { 
+                    ['new', 'package', 'interface', 'class', 'native'].contains(it) ? it + '_' : it 
+                }.join('.')
+                namespace = "com.legacy.${safeName}"
+            }
+        }
+    }
+    pluginManager.withPlugin('com.android.application') {
+        android {
+            if (namespace == null) {
+                def safeName = project.name.replace('-', '.').replace('_', '.')
+                namespace = "com.legacy.${safeName}"
+            }
+        }
+    }
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
