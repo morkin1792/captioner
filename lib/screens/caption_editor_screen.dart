@@ -387,6 +387,8 @@ class _CaptionEditorScreenState extends State<CaptionEditorScreen>
   void _deleteCaption(String lang, int index) {
     setState(() {
       _editedSubtitles[lang]!.removeAt(index);
+      // Clear GlobalKey cache for this language to force rebuild with correct indices
+      _captionKeys[lang]?.clear();
     });
   }
 
@@ -723,6 +725,7 @@ class _CaptionEditorScreenState extends State<CaptionEditorScreen>
                                   ),
                                   const SizedBox(height: 8),
                                   TextFormField(
+                                    key: ValueKey('${lang}_${sub.startMs}_${sub.endMs}'),
                                     initialValue: sub.text,
                                     maxLines: null,
                                     decoration: const InputDecoration(

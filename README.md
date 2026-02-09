@@ -104,10 +104,3 @@ The app will prompt you to enter these keys on first launch. Keys are stored sec
 6. **Process**: Let the app transcribe, translate, and render your video
 7. **Save**: Export the video with embedded captions
 
-## Supported Languages
-
-**Transcription** (via AssemblyAI):
-- English, Portuguese, Spanish, and many more
-
-**Translation** (via Gemini):
-- Any language supported by Gemini AI

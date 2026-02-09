@@ -8,12 +8,14 @@ class LanguageStyle {
   final double fontSize; // As percentage of video height
   final Color color;
   final double verticalPosition; // As percentage from top (0-100)
+  final double borderWidth; // Outline thickness for ASS subtitles
 
   const LanguageStyle({
     this.fontFamily = 'Roboto',
-    this.fontSize = 4.0,
+    this.fontSize = 5.0,
     this.color = Colors.white,
     this.verticalPosition = 85.0, // Default near bottom
+    this.borderWidth = 4.0,
   });
 
   LanguageStyle copyWith({
@@ -21,12 +23,14 @@ class LanguageStyle {
     double? fontSize,
     Color? color,
     double? verticalPosition,
+    double? borderWidth,
   }) {
     return LanguageStyle(
       fontFamily: fontFamily ?? this.fontFamily,
       fontSize: fontSize ?? this.fontSize,
       color: color ?? this.color,
       verticalPosition: verticalPosition ?? this.verticalPosition,
+      borderWidth: borderWidth ?? this.borderWidth,
     );
   }
 
@@ -35,13 +39,15 @@ class LanguageStyle {
     'fontSize': fontSize,
     'color': color.value,
     'verticalPosition': verticalPosition,
+    'borderWidth': borderWidth,
   };
 
   factory LanguageStyle.fromJson(Map<String, dynamic> json) => LanguageStyle(
     fontFamily: json['fontFamily'] as String? ?? 'Roboto',
-    fontSize: (json['fontSize'] as num?)?.toDouble() ?? 4.0,
+    fontSize: (json['fontSize'] as num?)?.toDouble() ?? 5.0,
     color: Color(json['color'] as int? ?? 0xFFFFFFFF),
     verticalPosition: (json['verticalPosition'] as num?)?.toDouble() ?? 85.0,
+    borderWidth: (json['borderWidth'] as num?)?.toDouble() ?? 4.0,
   );
 }
 
@@ -104,17 +110,19 @@ class CaptionConfig {
     'Noto Sans',
   ];
 
-  /// Preset colors for captions
-  static const availableColors = [
+  /// Default preset colors for captions
+  static const defaultColors = [
+    Color.fromARGB(255, 0, 214, 255), // Cyan
+    Color.fromARGB(255, 255, 18, 99), // Red/Pink
     Colors.white,
     Colors.yellow,
-    Colors.cyan,
-    Colors.lime,
-    Colors.orange,
-    Colors.pink,
-    Colors.lightBlue,
     Colors.amber,
+    Colors.lime,
+    Colors.orange
   ];
+
+  /// Mutable color list (can be overridden by saved custom colors)
+  static List<Color> availableColors = List.from(defaultColors);
 
   static String getLanguageName(String code) {
     return supportedLanguages[code] ?? code;
@@ -134,6 +142,28 @@ class CaptionConfig {
   static const _prefsKeyOriginalLang = 'captioner_original_language';
   static const _prefsKeySelectedLangs = 'captioner_selected_languages';
   static const _prefsKeyStyles = 'captioner_language_styles';
+  static const _prefsKeyCustomColors = 'captioner_custom_colors';
+
+  /// Save custom color palette to SharedPreferences
+  static Future<void> saveCustomColors(List<Color> colors) async {
+    final prefs = await SharedPreferences.getInstance();
+    final colorValues = colors.map((c) => c.value.toString()).toList();
+    await prefs.setStringList(_prefsKeyCustomColors, colorValues);
+    availableColors = List.from(colors);
+  }
+
+  /// Load custom color palette from SharedPreferences
+  static Future<void> loadCustomColors() async {
+    final prefs = await SharedPreferences.getInstance();
+    final colorValues = prefs.getStringList(_prefsKeyCustomColors);
+    if (colorValues != null && colorValues.isNotEmpty) {
+      availableColors = colorValues
+          .map((v) => Color(int.parse(v)))
+          .toList();
+    } else {
+      availableColors = List.from(defaultColors);
+    }
+  }
 
   /// Save settings to SharedPreferences
   static Future<void> saveSettings({

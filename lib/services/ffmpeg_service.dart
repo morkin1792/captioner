@@ -123,7 +123,8 @@ class FfmpegService {
     buffer.writeln('');
     buffer.writeln('[V4+ Styles]');
     buffer.writeln('Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding');
-    buffer.writeln('Style: Default,${style.fontFamily},$fontSize,$colorHex,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,$marginV,1');
+    final outline = style.borderWidth.round();
+    buffer.writeln('Style: Default,${style.fontFamily},$fontSize,$colorHex,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,$outline,1,2,10,10,$marginV,1');
     buffer.writeln('');
     buffer.writeln('[Events]');
     buffer.writeln('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text');
@@ -167,7 +168,8 @@ class FfmpegService {
       final colorHex = CaptionConfig.colorToAssHex(style.color);
       // Use per-language vertical position (percentage from top -> margin from bottom)
       final marginV = ((100 - style.verticalPosition) * videoHeight / 100).round().clamp(10, videoHeight - 50);
-      buffer.writeln('Style: Lang_$lang,${style.fontFamily},$fontSize,$colorHex,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,$marginV,1');
+      final outline = style.borderWidth.round();
+      buffer.writeln('Style: Lang_$lang,${style.fontFamily},$fontSize,$colorHex,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,$outline,1,2,10,10,$marginV,1');
     }
 
     buffer.writeln('');

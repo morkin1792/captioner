@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -77,6 +78,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Export captions preference
   bool _exportCaptionsOnRender = false;
   
+  // Auto-load SRT files when video is loaded
+  bool _autoLoadSrt = false;
+  
   // Translation toggle (requires Gemini API key)
   bool _useTranslation = true; // Default to true if key is available
   bool _hasGeminiKey = false;
@@ -112,6 +116,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _loadSavedSettings() async {
+    // Load custom color palette
+    await CaptionConfig.loadCustomColors();
+    
     final saved = await CaptionConfig.loadSettings();
     if (saved != null) {
       setState(() {
@@ -131,6 +138,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _exportCaptionsOnRender = prefs.getBool('exportCaptionsOnRender') ?? true;
       _charsPerSegment = prefs.getInt('charsPerSegment') ?? 25;
+      _autoLoadSrt = prefs.getBool('autoLoadSrt') ?? false;
       _hasGeminiKey = hasGemini;
       _useTranslation = hasGemini; // Default to true only if key is available
     });
@@ -140,14 +148,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final fonts = await FontService.getAvailableFonts();
     final lastFont = await FontService.getLastUsedFont();
     
+    // Use the first available font as default if no font was previously saved
+    final defaultFont = fonts.isNotEmpty ? fonts.first : lastFont;
+    
     setState(() {
       _systemFonts = fonts;
       _fontsLoaded = true;
       
-      // Apply last used font to any language that doesn't have a custom font
+      // Apply last used font (or first available) to any language that doesn't have a custom font
       if (_languageStyles.isEmpty && _selectedLanguages.isNotEmpty) {
         for (final lang in _selectedLanguages) {
-          _languageStyles[lang] = LanguageStyle(fontFamily: lastFont);
+          _languageStyles[lang] = LanguageStyle(fontFamily: lastFont != 'Roboto' ? lastFont : defaultFont);
         }
       }
     });
@@ -876,8 +887,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _autoImportSrt() async {
-    if (_videoPath == null) return;
+  Future<int> _autoImportSrt() async {
+    if (_videoPath == null) return 0;
     
     setState(() => _processingStatus = 'Searching for SRT files...');
 
@@ -894,7 +905,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Directory not found for auto-import.')),
         );
-        return;
+        return 0;
       }
 
       int importedCount = 0;
@@ -922,10 +933,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Imported $importedCount SRT files.')),
       );
+      return importedCount;
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error auto-importing: $e'), backgroundColor: Colors.red),
       );
+      return 0;
     }
   }
 
@@ -1479,8 +1492,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _handleStepContinue() {
+  Future<void> _handleStepContinue() async {
     switch (_currentStep) {
+      case 1:
+        // Languages step: check auto-load SRT
+        if (_autoLoadSrt) {
+          final count = await _autoImportSrt();
+          if (count > 0) {
+            setState(() => _currentStep = 3); // Skip to Review Captions
+            return;
+          }
+        }
+        setState(() => _currentStep++);
+        break;
       case 2:
         _runTranscription();
         break;
@@ -1580,6 +1604,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               },
             );
           }).toList(),
+        ),
+        const SizedBox(height: 16),
+        CheckboxListTile(
+          title: const Text('Auto load SRT files'),
+          subtitle: const Text('Import matching SRT files and skip to review'),
+          value: _autoLoadSrt,
+          onChanged: (val) async {
+            setState(() => _autoLoadSrt = val ?? false);
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('autoLoadSrt', _autoLoadSrt);
+          },
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          dense: true,
         ),
       ],
     );
@@ -1802,12 +1840,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             OutlinedButton.icon(
               onPressed: _exportCaptionsToSrt,
-              icon: const Icon(Icons.file_upload),
+              icon: const Icon(Icons.upload),
               label: const Text('Export SRT'),
             ),
             OutlinedButton.icon(
               onPressed: _showImportSrtDialog,
-              icon: const Icon(Icons.file_download),
+              icon: const Icon(Icons.download),
               label: const Text('Import SRT'),
             ),
             // Show retranslate button only if there are non-original languages
@@ -1953,10 +1991,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           runSpacing: 8,
           children: [
             // Preset colors
-            ...CaptionConfig.availableColors.map((color) {
+            ...List.generate(CaptionConfig.availableColors.length, (i) {
+              final color = CaptionConfig.availableColors[i];
               final isSelected = currentStyle.color.value == color.value;
               return InkWell(
                 onTap: () => _updateLanguageStyle(color: color),
+                onLongPress: () => _showEditColorPicker(i, color),
                 child: Container(
                   width: 40,
                   height: 40,
@@ -1968,13 +2008,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: isSelected 
-                      ? Icon(Icons.check, color: color.computeLuminance() > 0.5 ? Colors.black : Colors.white)
+                  child: isSelected
+                      ? Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Icon(Icons.check, color: color.computeLuminance() > 0.5 ? Colors.black : Colors.white, size: 18),
+                            Positioned(
+                              right: 0,
+                              bottom: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(1),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primary,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: InkWell(
+                                  onTap: () => _showEditColorPicker(i, color),
+                                  child: Icon(Icons.edit, size: 10, color: colorScheme.onPrimary),
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
                       : null,
                 ),
               );
             }),
-            // Custom color picker button
+            // Custom color picker button (add new color)
             InkWell(
               onTap: () => _showCustomColorPicker(currentStyle.color),
               child: Container(
@@ -2004,12 +2064,177 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           onChanged: (value) => _updateLanguageStyle(verticalPosition: value),
         ),
         const SizedBox(height: 16),
+        
+        // Border Width
+        Text('Border Width: ${currentStyle.borderWidth.toInt()}',
+            style: Theme.of(context).textTheme.titleSmall),
+        Slider(
+          value: currentStyle.borderWidth,
+          min: 0.0,
+          max: 10.0,
+          divisions: 10,
+          label: '${currentStyle.borderWidth.toInt()}',
+          onChanged: (value) => _updateLanguageStyle(borderWidth: value),
+        ),
+        const SizedBox(height: 16),
         _buildPreviewCard(colorScheme),
       ],
     );
   }
 
+  /// Build the enhanced color picker dialog content (shared between custom and edit)
+  Widget _buildColorPickerContent({
+    required Color selectedColor,
+    required StateSetter setDialogState,
+    required TextEditingController hexController,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Color preview with grey background for transparency visibility
+        Container(
+          width: 80,
+          height: 80,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey),
+            color: Colors.grey.shade800,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: selectedColor,
+              borderRadius: BorderRadius.circular(7),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        // Hex code input
+        Row(
+          children: [
+            const Text('#', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(width: 4),
+            Expanded(
+              child: TextField(
+                controller: hexController,
+                decoration: const InputDecoration(
+                  hintText: 'RRGGBBAA',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                ),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+                onSubmitted: (value) {
+                  final parsed = _parseHexColor(value);
+                  if (parsed != null) {
+                    setDialogState(() {});
+                  }
+                },
+              ),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: const Icon(Icons.content_copy, size: 18),
+              tooltip: 'Copy',
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: hexController.text));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Color code copied'), duration: Duration(seconds: 1)),
+                );
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.content_paste, size: 18),
+              tooltip: 'Paste',
+              onPressed: () async {
+                final data = await Clipboard.getData(Clipboard.kTextPlain);
+                if (data?.text != null) {
+                  final cleaned = data!.text!.replaceAll('#', '').trim();
+                  hexController.text = cleaned;
+                  final parsed = _parseHexColor(cleaned);
+                  if (parsed != null) {
+                    setDialogState(() {});
+                  }
+                }
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Red slider
+        _buildColorSlider('R', Colors.red, selectedColor.red.toDouble(), (v) {
+          setDialogState(() {
+            final c = selectedColor.withRed(v.toInt());
+            hexController.text = _colorToHex(c);
+          });
+        }),
+        // Green slider
+        _buildColorSlider('G', Colors.green, selectedColor.green.toDouble(), (v) {
+          setDialogState(() {
+            final c = selectedColor.withGreen(v.toInt());
+            hexController.text = _colorToHex(c);
+          });
+        }),
+        // Blue slider
+        _buildColorSlider('B', Colors.blue, selectedColor.blue.toDouble(), (v) {
+          setDialogState(() {
+            final c = selectedColor.withBlue(v.toInt());
+            hexController.text = _colorToHex(c);
+          });
+        }),
+        // Alpha slider
+        _buildColorSlider('A', Colors.grey, selectedColor.alpha.toDouble(), (v) {
+          setDialogState(() {
+            final c = selectedColor.withAlpha(v.toInt());
+            hexController.text = _colorToHex(c);
+          });
+        }),
+      ],
+    );
+  }
+
+  Widget _buildColorSlider(String label, Color activeColor, double value, ValueChanged<double> onChanged) {
+    return Row(
+      children: [
+        SizedBox(width: 16, child: Text(label, style: TextStyle(color: activeColor, fontWeight: FontWeight.bold))),
+        Expanded(
+          child: Slider(
+            value: value,
+            min: 0,
+            max: 255,
+            activeColor: activeColor,
+            onChanged: onChanged,
+          ),
+        ),
+        SizedBox(width: 32, child: Text('${value.toInt()}')),
+      ],
+    );
+  }
+
+  String _colorToHex(Color c) {
+    final r = c.red.toRadixString(16).padLeft(2, '0');
+    final g = c.green.toRadixString(16).padLeft(2, '0');
+    final b = c.blue.toRadixString(16).padLeft(2, '0');
+    final a = c.alpha.toRadixString(16).padLeft(2, '0');
+    return '$r$g$b$a'.toUpperCase();
+  }
+
+  Color? _parseHexColor(String hex) {
+    hex = hex.replaceAll('#', '').trim().toUpperCase();
+    if (hex.length == 6) hex = '${hex}FF'; // Default to full opacity
+    if (hex.length != 8) return null;
+    try {
+      final r = int.parse(hex.substring(0, 2), radix: 16);
+      final g = int.parse(hex.substring(2, 4), radix: 16);
+      final b = int.parse(hex.substring(4, 6), radix: 16);
+      final a = int.parse(hex.substring(6, 8), radix: 16);
+      return Color.fromARGB(a, r, g, b);
+    } catch (e) {
+      return null;
+    }
+  }
+
   Future<void> _showCustomColorPicker(Color initialColor) async {
+    final hexController = TextEditingController(text: _colorToHex(initialColor));
     Color selectedColor = initialColor;
     
     final result = await showDialog<Color>(
@@ -2018,75 +2243,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         title: const Text('Choose Color'),
         content: StatefulBuilder(
           builder: (context, setDialogState) {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Color preview
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: selectedColor,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // Red slider
-                Row(
-                  children: [
-                    const Text('R', style: TextStyle(color: Colors.red)),
-                    Expanded(
-                      child: Slider(
-                        value: selectedColor.red.toDouble(),
-                        min: 0,
-                        max: 255,
-                        activeColor: Colors.red,
-                        onChanged: (v) => setDialogState(() {
-                          selectedColor = selectedColor.withRed(v.toInt());
-                        }),
-                      ),
-                    ),
-                    Text('${selectedColor.red}'),
-                  ],
-                ),
-                // Green slider
-                Row(
-                  children: [
-                    const Text('G', style: TextStyle(color: Colors.green)),
-                    Expanded(
-                      child: Slider(
-                        value: selectedColor.green.toDouble(),
-                        min: 0,
-                        max: 255,
-                        activeColor: Colors.green,
-                        onChanged: (v) => setDialogState(() {
-                          selectedColor = selectedColor.withGreen(v.toInt());
-                        }),
-                      ),
-                    ),
-                    Text('${selectedColor.green}'),
-                  ],
-                ),
-                // Blue slider
-                Row(
-                  children: [
-                    const Text('B', style: TextStyle(color: Colors.blue)),
-                    Expanded(
-                      child: Slider(
-                        value: selectedColor.blue.toDouble(),
-                        min: 0,
-                        max: 255,
-                        activeColor: Colors.blue,
-                        onChanged: (v) => setDialogState(() {
-                          selectedColor = selectedColor.withBlue(v.toInt());
-                        }),
-                      ),
-                    ),
-                    Text('${selectedColor.blue}'),
-                  ],
-                ),
-              ],
+            // Sync selectedColor from hex controller
+            final parsed = _parseHexColor(hexController.text);
+            if (parsed != null) selectedColor = parsed;
+
+            return _buildColorPickerContent(
+              selectedColor: selectedColor,
+              setDialogState: setDialogState,
+              hexController: hexController,
             );
           },
         ),
@@ -2096,19 +2260,72 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, selectedColor),
+            onPressed: () {
+              final parsed = _parseHexColor(hexController.text);
+              Navigator.pop(context, parsed ?? selectedColor);
+            },
             child: const Text('Apply'),
           ),
         ],
       ),
     );
 
+    hexController.dispose();
+
     if (result != null) {
       _updateLanguageStyle(color: result);
     }
   }
+
+  Future<void> _showEditColorPicker(int colorIndex, Color initialColor) async {
+    final hexController = TextEditingController(text: _colorToHex(initialColor));
+    Color selectedColor = initialColor;
+    
+    final result = await showDialog<Color>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Color'),
+        content: StatefulBuilder(
+          builder: (context, setDialogState) {
+            final parsed = _parseHexColor(hexController.text);
+            if (parsed != null) selectedColor = parsed;
+
+            return _buildColorPickerContent(
+              selectedColor: selectedColor,
+              setDialogState: setDialogState,
+              hexController: hexController,
+            );
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final parsed = _parseHexColor(hexController.text);
+              Navigator.pop(context, parsed ?? selectedColor);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    hexController.dispose();
+
+    if (result != null) {
+      setState(() {
+        CaptionConfig.availableColors[colorIndex] = result;
+      });
+      _updateLanguageStyle(color: result);
+      // Persist the custom color palette
+      await CaptionConfig.saveCustomColors(CaptionConfig.availableColors);
+    }
+  }
   
-  void _updateLanguageStyle({String? fontFamily, double? fontSize, Color? color, double? verticalPosition}) {
+  void _updateLanguageStyle({String? fontFamily, double? fontSize, Color? color, double? verticalPosition, double? borderWidth}) {
     if (_selectedStyleLanguage == null) return;
     
     setState(() {
@@ -2118,6 +2335,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         fontSize: fontSize,
         color: color,
         verticalPosition: verticalPosition,
+        borderWidth: borderWidth,
       );
     });
     _saveSettings(); // Persist changes
@@ -2178,29 +2396,63 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     color: Colors.black.withOpacity(0.7),
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: Text(
-                    previewText,
-                    style: () {
-                      // Use GoogleFonts for proper font rendering
-                      TextStyle baseStyle = TextStyle(
+                  child: () {
+                    TextStyle textStyle;
+                    try {
+                      if (FontService.isGoogleFont(style.fontFamily)) {
+                        textStyle = GoogleFonts.getFont(style.fontFamily, 
+                          fontSize: fontSize,
+                          color: style.color,
+                        );
+                      } else {
+                        textStyle = TextStyle(
+                          fontSize: fontSize,
+                          color: style.color,
+                          fontFamily: style.fontFamily,
+                        );
+                      }
+                    } catch (e) {
+                      textStyle = TextStyle(
                         fontSize: fontSize,
                         color: style.color,
+                        fontFamily: style.fontFamily,
                       );
-                      try {
-                        if (FontService.isGoogleFont(style.fontFamily)) {
-                          return GoogleFonts.getFont(style.fontFamily, 
-                            fontSize: fontSize,
-                            color: style.color,
-                          );
-                        }
-                      } catch (e) {
-                        // Fallback to system font
-                      }
-                      return baseStyle.copyWith(fontFamily: style.fontFamily);
-                    }(),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1, // Single line like movies
-                  ),
+                    }
+                    
+                    if (style.borderWidth > 0) {
+                      // Render text with outline using Stack of stroke + fill
+                      return Stack(
+                        children: [
+                          // Stroke layer
+                          Text(
+                            previewText,
+                            style: textStyle.copyWith(
+                              foreground: Paint()
+                                ..style = PaintingStyle.stroke
+                                ..strokeWidth = style.borderWidth
+                                ..color = Colors.black,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                          // Fill layer
+                          Text(
+                            previewText,
+                            style: textStyle,
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ],
+                      );
+                    } else {
+                      return Text(
+                        previewText,
+                        style: textStyle,
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      );
+                    }
+                  }(),
                 ),
               );
             }),
